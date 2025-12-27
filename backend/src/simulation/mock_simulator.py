@@ -1,328 +1,474 @@
+"""
+Mock traffic simulator (replaces SUMO)
+"""
 import time
 import random
-import math
-from typing import List, Dict, Any, Optional
-import logging
+import threading
 from datetime import datetime
-
-logger = logging.getLogger(__name__)
+from typing import List, Dict, Any
+import json
 
 class MockSimulator:
-    """Simulateur mocké pour Urban Flow avec données réalistes"""
+    """
+    Simulates SUMO for frontend development
+    Generates realistic vehicle movement data
+    """
     
-    def __init__(self):
+    def __init__(self, config=None):
+        self.config = config or {}
+        self.vehicles: List[Dict] = []
+        self.traffic_lights: List[Dict] = []
+        self.metrics: Dict = {}
         self.is_running = False
         self.is_paused = False
         self.current_scenario = None
         self.simulation_time = 0
-        self.simulation_speed = 1.0
+        self.start_real_time = None
+        self.update_interval = self.config.get('update_interval', 0.1)
+        self.network_bounds = self.config.get('network_bounds', {
+            'min_lat': 48.85,
+            'max_lat': 48.86,
+            'min_lng': 2.35,
+            'max_lng': 2.36,
+        })
         
-        # Données de simulation
-        self.vehicles = []
-        self.traffic_lights = []
-        self.metrics = {}
-        self.network = []
+        # Initialize
+        self._initialize_traffic_lights()
+        self._initialize_network_edges()
         
-        # Configuration des scénarios
-        self.scenarios = {
-            'default': {
-                'name': 'Trafic Normal',
-                'vehicle_count': 50,
-                'emergency_vehicles': 1,
-                'traffic_density': 0.6,
-                'speed_range': (30, 60)
-            },
-            'rush_hour': {
-                'name': 'Heure de Pointe',
-                'vehicle_count': 150,
-                'emergency_vehicles': 3,
-                'traffic_density': 0.9,
-                'speed_range': (20, 40)
-            },
-            'weekend': {
-                'name': 'Week-end',
-                'vehicle_count': 80,
-                'emergency_vehicles': 2,
-                'traffic_density': 0.7,
-                'speed_range': (40, 70)
-            },
-            'emergency_test': {
-                'name': 'Test Urgence',
-                'vehicle_count': 30,
-                'emergency_vehicles': 5,
-                'traffic_density': 0.4,
-                'speed_range': (50, 80)
-            }
+        # Statistics
+        self.stats = {
+            'total_vehicles_created': 0,
+            'total_distance_traveled': 0,
+            'emergency_vehicles_served': 0
         }
-        
-        # Initialisation
-        self._initialize_network()
-        
-    def _initialize_network(self):
-        """Initialiser le réseau routier mocké"""
-        self.network = []
-        
-        # Intersections principales
-        intersections = [
-            {'id': 'int_1', 'position': {'lat': 48.8560, 'lng': 2.3515}},
-            {'id': 'int_2', 'position': {'lat': 48.8560, 'lng': 2.3529}},
-            {'id': 'int_3', 'position': {'lat': 48.8572, 'lng': 2.3515}},
-            {'id': 'int_4', 'position': {'lat': 48.8572, 'lng': 2.3529}},
-        ]
-        
-        # Routes entre intersections
-        for i in range(len(intersections)):
-            for j in range(i + 1, len(intersections)):
-                self.network.append({
-                    'id': f'road_{i}_{j}',
-                    'from': intersections[i]['id'],
-                    'to': intersections[j]['id'],
-                    'length': random.uniform(100, 500),
-                    'lanes': random.randint(1, 3)
-                })
-                
+    
     def _initialize_traffic_lights(self):
-        """Initialiser les feux tricolores"""
-        self.traffic_lights = []
-        
-        phases = [
-            {'duration': 30, 'state': 'GGGrrr'},
-            {'duration': 3, 'state': 'yyyrrr'},
-            {'duration': 30, 'state': 'rrrGGG'},
-            {'duration': 3, 'state': 'rrryyy'},
-        ]
-        
-        for i in range(4):
-            self.traffic_lights.append({
-                'id': f'tl_{i}',
-                'name': f'Feu {i+1}',
-                'position': {
-                    'lat': 48.8566 + random.uniform(-0.005, 0.005),
-                    'lng': 2.3522 + random.uniform(-0.005, 0.005)
-                },
-                'state': random.choice(['GGGrrr', 'rrrGGG']),
+        """Initialize mock traffic lights"""
+        self.traffic_lights = [
+            {
+                'id': 'tl_001',
+                'position': {'lat': 48.8566, 'lng': 2.3525},
+                'state': 'GGGrrr',
                 'currentPhase': 0,
-                'phases': phases,
-                'phaseStartTime': time.time(),
-                'intersectionId': f'int_{i+1}'
-            })
-            
-    def _generate_vehicles(self, scenario_config: Dict):
-        """Générer des véhicules pour un scénario"""
-        vehicle_types = ['passenger', 'bus', 'truck', 'motorcycle', 'emergency']
-        type_weights = [0.7, 0.1, 0.1, 0.08, 0.02]
-        
-        self.vehicles = []
-        
-        for i in range(scenario_config['vehicle_count']):
-            vehicle_type = random.choices(vehicle_types, weights=type_weights)[0]
-            road = random.choice(self.network)
-            
-            self.vehicles.append({
-                'id': f'veh_{vehicle_type}_{i}',
-                'type': vehicle_type,
-                'position': {
-                    'lat': 48.8566 + random.uniform(-0.01, 0.01),
-                    'lng': 2.3522 + random.uniform(-0.01, 0.01)
-                },
-                'speed': random.uniform(*scenario_config['speed_range']),
-                'lane': f'lane_{random.randint(1, 3)}',
-                'heading': random.uniform(0, 360),
-                'route': [road['from'], road['to']],
-                'color': self._get_vehicle_color(vehicle_type),
-                'length': self._get_vehicle_length(vehicle_type),
-                'acceleration': 0,
-                'waitingTime': 0,
-                'distanceTraveled': 0
-            })
-            
-    def _get_vehicle_color(self, vehicle_type: str) -> str:
-        """Obtenir la couleur d'un véhicule"""
-        colors = {
-            'passenger': '#3b82f6',
-            'emergency': '#ef4444',
-            'bus': '#10b981',
-            'truck': '#8b5cf6',
-            'motorcycle': '#f59e0b'
-        }
-        return colors.get(vehicle_type, '#6b7280')
-        
-    def _get_vehicle_length(self, vehicle_type: str) -> float:
-        """Obtenir la longueur d'un véhicule"""
-        lengths = {
-            'passenger': 4.5,
-            'emergency': 6.0,
-            'bus': 12.0,
-            'truck': 18.0,
-            'motorcycle': 2.0
-        }
-        return lengths.get(vehicle_type, 4.5)
-        
-    def start_simulation(self, scenario_id: str = 'default', speed: float = 1.0) -> bool:
-        """Démarrer la simulation"""
-        if scenario_id not in self.scenarios:
-            logger.error(f"Scénario inconnu: {scenario_id}")
-            return False
-            
-        logger.info(f"Démarrage simulation: {scenario_id}")
-        
-        if self.is_running:
-            self.stop_simulation()
-            time.sleep(0.1)
-            
+                'phases': [
+                    {'duration': 30, 'state': 'GGGrrr'},
+                    {'duration': 5, 'state': 'yyyrrr'},
+                    {'duration': 30, 'state': 'rrrGGG'},
+                    {'duration': 5, 'state': 'rrryyy'},
+                ],
+                'lastChange': time.time(),
+                'efficiency': 0.85
+            },
+            {
+                'id': 'tl_002',
+                'position': {'lat': 48.8560, 'lng': 2.3530},
+                'state': 'rrrGGG',
+                'currentPhase': 2,
+                'phases': [
+                    {'duration': 25, 'state': 'rrrGGG'},
+                    {'duration': 5, 'state': 'rrryyy'},
+                    {'duration': 25, 'state': 'GGGrrr'},
+                    {'duration': 5, 'state': 'yyyrrr'},
+                ],
+                'lastChange': time.time(),
+                'efficiency': 0.78
+            },
+            {
+                'id': 'tl_003',
+                'position': {'lat': 48.8555, 'lng': 2.3515},
+                'state': 'GGrrGG',
+                'currentPhase': 0,
+                'phases': [
+                    {'duration': 20, 'state': 'GGrrGG'},
+                    {'duration': 5, 'state': 'yyrryy'},
+                    {'duration': 20, 'state': 'rrGGrr'},
+                    {'duration': 5, 'state': 'rryyrr'},
+                ],
+                'lastChange': time.time(),
+                'efficiency': 0.92
+            }
+        ]
+    
+    def _initialize_network_edges(self):
+        """Initialize network edges for vehicle movement"""
+        self.edges = [
+            {'id': 'edge_1', 'from_lat': 48.8500, 'from_lng': 2.3500, 'to_lat': 48.8510, 'to_lng': 2.3510, 'length': 1.0},
+            {'id': 'edge_2', 'from_lat': 48.8510, 'from_lng': 2.3510, 'to_lat': 48.8520, 'to_lng': 2.3520, 'length': 1.0},
+            {'id': 'edge_3', 'from_lat': 48.8520, 'from_lng': 2.3520, 'to_lat': 48.8530, 'to_lng': 2.3530, 'length': 1.0},
+            {'id': 'edge_4', 'from_lat': 48.8530, 'from_lng': 2.3530, 'to_lat': 48.8540, 'to_lng': 2.3540, 'length': 1.0},
+            {'id': 'edge_5', 'from_lat': 48.8540, 'from_lng': 2.3540, 'to_lat': 48.8550, 'to_lng': 2.3550, 'length': 1.0},
+        ]
+    
+    def start_simulation(self, scenario_id: str = 'default'):
+        """Start simulation with given scenario"""
         self.current_scenario = scenario_id
-        self.simulation_speed = max(0.1, min(10.0, speed))
-        self.simulation_time = 0
         self.is_running = True
         self.is_paused = False
+        self.simulation_time = 0
+        self.start_real_time = time.time()
         
-        self._initialize_traffic_lights()
-        self._generate_vehicles(self.scenarios[scenario_id])
+        # Generate initial vehicles based on scenario
+        vehicle_count = self._get_vehicle_count_for_scenario(scenario_id)
+        self._generate_initial_vehicles(vehicle_count)
         
-        emergency_count = self.scenarios[scenario_id]['emergency_vehicles']
-        for i in range(emergency_count):
-            self.add_emergency_vehicle()
-            
-        logger.info(f"Simulation démarrée: {len(self.vehicles)} véhicules")
+        print(f"✅ Simulation started with scenario: {scenario_id}")
+        print(f"   Vehicles: {vehicle_count}")
+        
         return True
-        
-    def stop_simulation(self) -> bool:
-        """Arrêter la simulation"""
-        logger.info("Arrêt simulation")
+    
+    def stop_simulation(self):
+        """Stop simulation"""
         self.is_running = False
         self.is_paused = False
-        self.current_scenario = None
-        return True
+        self.vehicles.clear()
+        self.simulation_time = 0
+        print("⏹️ Simulation stopped")
         
-    def update_simulation(self, delta_time: float):
-        """Mettre à jour la simulation"""
+        return True
+    
+    def pause_simulation(self):
+        """Pause simulation"""
+        self.is_paused = True
+        print("⏸️ Simulation paused")
+        
+        return True
+    
+    def resume_simulation(self):
+        """Resume simulation"""
+        self.is_paused = False
+        print("▶️ Simulation resumed")
+        
+        return True
+    
+    def _get_vehicle_count_for_scenario(self, scenario_id: str) -> int:
+        """Get vehicle count based on scenario"""
+        scenario_counts = {
+            'default': 50,
+            'rush_hour': 120,
+            'emergency_test': 30,
+            'weekend': 25
+        }
+        return scenario_counts.get(scenario_id, 50)
+    
+    def _generate_initial_vehicles(self, count: int):
+        """Generate initial vehicles"""
+        self.vehicles = []
+        vehicle_types = ['passenger', 'bus', 'truck', 'motorcycle', 'bicycle']
+        colors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4']
+        
+        for i in range(count):
+            vehicle_type = random.choice(vehicle_types)
+            color = colors[i % len(colors)]
+            
+            # Choose random edge
+            edge = random.choice(self.edges)
+            
+            # Interpolate position along edge
+            progress = random.random()
+            lat = edge['from_lat'] + (edge['to_lat'] - edge['from_lat']) * progress
+            lng = edge['from_lng'] + (edge['to_lng'] - edge['from_lng']) * progress
+            
+            # Set speed based on vehicle type
+            speed_ranges = {
+                'passenger': (30, 60),
+                'bus': (20, 40),
+                'truck': (30, 70),
+                'motorcycle': (40, 80),
+                'bicycle': (15, 25),
+                'emergency': (60, 90)
+            }
+            min_speed, max_speed = speed_ranges.get(vehicle_type, (30, 60))
+            
+            vehicle = {
+                'id': f'veh_{i:03d}',
+                'type': vehicle_type,
+                'position': {'lat': lat, 'lng': lng},
+                'speed': round(random.uniform(min_speed, max_speed), 1),
+                'lane': f'{edge["id"]}_lane_{random.randint(0, 1)}',
+                'route': [edge['id']] + [e['id'] for e in random.sample(self.edges, 2)],
+                'color': color,
+                'heading': random.uniform(0, 360),
+                'edge': edge['id'],
+                'progress': progress,
+                'direction': 1 if random.random() > 0.5 else -1,
+                'distanceTraveled': 0,
+                'createdAt': time.time()
+            }
+            self.vehicles.append(vehicle)
+            self.stats['total_vehicles_created'] += 1
+    
+    def update_simulation(self, delta_time: float = 0.1):
+        """Update simulation by one time step"""
         if not self.is_running or self.is_paused:
             return
-            
-        dt = delta_time * self.simulation_speed
-        self.simulation_time += dt
         
-        self._update_traffic_lights(dt)
-        self._update_vehicles(dt)
+        self.simulation_time += delta_time
         
+        # Update traffic lights
+        self._update_traffic_lights(delta_time)
+        
+        # Update vehicle positions
+        self._update_vehicles(delta_time)
+        
+        # Randomly add/remove vehicles
+        self._manage_vehicle_population()
+        
+        # Calculate metrics
+        self.metrics = self.calculate_metrics()
+    
     def _update_traffic_lights(self, delta_time: float):
-        """Mettre à jour les feux"""
+        """Update traffic light states"""
         current_time = time.time()
         
         for tl in self.traffic_lights:
-            phase_duration = tl['phases'][tl['currentPhase']]['duration']
-            elapsed = current_time - tl['phaseStartTime']
+            phase = tl['phases'][tl['currentPhase']]
             
-            if elapsed >= phase_duration:
+            # Check if phase duration has elapsed
+            if current_time - tl.get('lastChange', 0) > phase['duration']:
                 tl['currentPhase'] = (tl['currentPhase'] + 1) % len(tl['phases'])
-                tl['phaseStartTime'] = current_time
                 tl['state'] = tl['phases'][tl['currentPhase']]['state']
-                
+                tl['lastChange'] = current_time
+    
     def _update_vehicles(self, delta_time: float):
-        """Mettre à jour les positions des véhicules"""
+        """Update vehicle positions and speeds"""
         for vehicle in self.vehicles:
-            speed_ms = vehicle['speed'] / 3.6
-            distance = speed_ms * delta_time
+            # Check if vehicle is at traffic light
+            near_traffic_light = self._is_near_traffic_light(vehicle)
             
-            angle_rad = math.radians(vehicle['heading'])
-            lat_change = (distance * math.cos(angle_rad)) / 111000
-            lng_change = (distance * math.sin(angle_rad)) / (111000 * math.cos(math.radians(vehicle['position']['lat'])))
-            
-            vehicle['position']['lat'] += lat_change
-            vehicle['position']['lng'] += lng_change
-            vehicle['distanceTraveled'] += distance
-            
-            # Vérifier les limites
-            if not (48.855 < vehicle['position']['lat'] < 48.858):
-                vehicle['heading'] = (vehicle['heading'] + 180) % 360
-                
-            if not (2.351 < vehicle['position']['lng'] < 2.3535):
-                vehicle['heading'] = (vehicle['heading'] + 180) % 360
-                
-            if random.random() < 0.05:
-                vehicle['speed'] = max(5, vehicle['speed'] * random.uniform(0.7, 0.9))
-                vehicle['waitingTime'] += delta_time
+            # Adjust speed based on traffic light
+            if near_traffic_light and near_traffic_light['state'][0] == 'r':  # Red light
+                vehicle['speed'] = max(0, vehicle['speed'] - 20 * delta_time)  # Decelerate
             else:
-                target_speed = random.uniform(40, 60)
-                if vehicle['speed'] < target_speed:
-                    vehicle['speed'] = min(target_speed, vehicle['speed'] + 2 * delta_time)
-                    
-            if random.random() < 0.01:
-                vehicle['heading'] = (vehicle['heading'] + random.uniform(-30, 30)) % 360
+                # Normal speed with some variation
+                base_speed = 50 if vehicle['type'] != 'emergency' else 70
+                target_speed = base_speed + random.uniform(-10, 10)
+                vehicle['speed'] += (target_speed - vehicle['speed']) * 0.1
+            
+            # Update progress along edge
+            speed_mps = vehicle['speed'] / 3.6  # Convert km/h to m/s
+            distance = speed_mps * delta_time
+            progress_delta = distance / 1000  # Convert to km progress
+            
+            vehicle['progress'] += progress_delta * vehicle['direction']
+            vehicle['distanceTraveled'] += distance / 1000  # in km
+            
+            # If vehicle reached end of edge, move to next edge
+            if vehicle['progress'] > 1.0 or vehicle['progress'] < 0:
+                # Get next edge from route
+                current_edge_idx = vehicle['route'].index(vehicle['edge']) if vehicle['edge'] in vehicle['route'] else 0
+                next_edge_idx = (current_edge_idx + 1) % len(vehicle['route'])
+                next_edge_id = vehicle['route'][next_edge_idx]
                 
-    def get_simulation_data(self) -> Dict[str, Any]:
-        """Obtenir les données complètes de simulation"""
+                # Find next edge
+                next_edge = next((e for e in self.edges if e['id'] == next_edge_id), None)
+                
+                if next_edge:
+                    vehicle['edge'] = next_edge_id
+                    vehicle['progress'] = 0 if vehicle['direction'] > 0 else 1.0
+                    vehicle['lane'] = f'{next_edge_id}_lane_{random.randint(0, 1)}'
+            
+            # Update position based on progress
+            edge = next((e for e in self.edges if e['id'] == vehicle['edge']), None)
+            if edge:
+                lat = edge['from_lat'] + (edge['to_lat'] - edge['from_lat']) * vehicle['progress']
+                lng = edge['from_lng'] + (edge['to_lng'] - edge['from_lng']) * vehicle['progress']
+                vehicle['position'] = {'lat': lat, 'lng': lng}
+                
+                # Update heading (direction of travel)
+                dx = edge['to_lng'] - edge['from_lng']
+                dy = edge['to_lat'] - edge['from_lat']
+                vehicle['heading'] = (180 / 3.14159) * (3.14159 / 2 - (0 if dx == 0 else (dy / dx) if dx != 0 else 0))
+    
+    def _is_near_traffic_light(self, vehicle: Dict) -> Dict:
+        """Check if vehicle is near a traffic light"""
+        for tl in self.traffic_lights:
+            # Simple distance check (in reality, use proper distance calculation)
+            dist = abs(vehicle['position']['lat'] - tl['position']['lat']) + abs(vehicle['position']['lng'] - tl['position']['lng'])
+            if dist < 0.001:  # Within ~100m
+                return tl
+        return None
+    
+    def _manage_vehicle_population(self):
+        """Randomly add or remove vehicles"""
+        # Random chance to add vehicle
+        if random.random() < 0.1:  # 10% chance each update
+            self._add_random_vehicle()
+        
+        # Random chance to remove vehicle
+        if random.random() < 0.05 and len(self.vehicles) > 10:  # 5% chance, keep at least 10
+            vehicle_to_remove = random.choice(self.vehicles)
+            self.vehicles.remove(vehicle_to_remove)
+    
+    def _add_random_vehicle(self):
+        """Add a random vehicle to simulation"""
+        vehicle_types = ['passenger', 'bus', 'truck', 'motorcycle', 'bicycle']
+        if random.random() < 0.1:  # 10% chance for emergency
+            vehicle_type = 'emergency'
+        else:
+            vehicle_type = random.choice(vehicle_types)
+        
+        colors = {
+            'passenger': '#3b82f6',
+            'emergency': '#ef4444',
+            'bus': '#f59e0b',
+            'truck': '#8b5cf6',
+            'motorcycle': '#10b981',
+            'bicycle': '#06b6d4'
+        }
+        
+        edge = random.choice(self.edges)
+        progress = random.random()
+        lat = edge['from_lat'] + (edge['to_lat'] - edge['from_lat']) * progress
+        lng = edge['from_lng'] + (edge['to_lng'] - edge['from_lng']) * progress
+        
+        vehicle = {
+            'id': f'veh_{self.stats["total_vehicles_created"]:04d}',
+            'type': vehicle_type,
+            'position': {'lat': lat, 'lng': lng},
+            'speed': random.uniform(30, 60),
+            'lane': f'{edge["id"]}_lane_{random.randint(0, 1)}',
+            'route': [edge['id']] + [e['id'] for e in random.sample(self.edges, 2)],
+            'color': colors.get(vehicle_type, '#3b82f6'),
+            'heading': random.uniform(0, 360),
+            'edge': edge['id'],
+            'progress': progress,
+            'direction': 1 if random.random() > 0.5 else -1,
+            'distanceTraveled': 0,
+            'createdAt': time.time()
+        }
+        
+        self.vehicles.append(vehicle)
+        self.stats['total_vehicles_created'] += 1
+    
+    def add_emergency_vehicle(self) -> Dict:
+        """Add an emergency vehicle"""
+        edge = random.choice(self.edges)
+        progress = random.random()
+        lat = edge['from_lat'] + (edge['to_lat'] - edge['from_lat']) * progress
+        lng = edge['from_lng'] + (edge['to_lng'] - edge['from_lng']) * progress
+        
+        emergency_types = ['ambulance', 'police', 'fire_truck']
+        
+        vehicle = {
+            'id': f'emergency_{self.stats["total_vehicles_created"]:04d}',
+            'type': 'emergency',
+            'subtype': random.choice(emergency_types),
+            'position': {'lat': lat, 'lng': lng},
+            'speed': random.uniform(60, 90),
+            'lane': f'{edge["id"]}_lane_{random.randint(0, 1)}',
+            'route': [edge['id']] + [e['id'] for e in random.sample(self.edges, 3)],
+            'color': '#ef4444',
+            'heading': random.uniform(0, 360),
+            'edge': edge['id'],
+            'progress': progress,
+            'direction': 1 if random.random() > 0.5 else -1,
+            'distanceTraveled': 0,
+            'sirenActive': True,
+            'priority': 'highest',
+            'createdAt': time.time()
+        }
+        
+        self.vehicles.append(vehicle)
+        self.stats['total_vehicles_created'] += 1
+        self.stats['emergency_vehicles_served'] += 1
+        
+        return vehicle
+    
+    def calculate_metrics(self) -> Dict:
+        """Calculate simulation metrics"""
+        if not self.vehicles:
+            return self._get_default_metrics()
+        
+        total_vehicles = len(self.vehicles)
+        total_speed = sum(v['speed'] for v in self.vehicles)
+        avg_speed = total_speed / total_vehicles
+        
+        # Count vehicle types
+        vehicle_counts = {}
+        for v in self.vehicles:
+            v_type = v['type']
+            vehicle_counts[v_type] = vehicle_counts.get(v_type, 0) + 1
+        
+        # Calculate CO2 emissions (simplified)
+        total_distance = sum(v['distanceTraveled'] for v in self.vehicles)
+        co2_per_km = {
+            'passenger': 120,
+            'emergency': 180,
+            'bus': 80,
+            'truck': 150,
+            'motorcycle': 60,
+            'bicycle': 0
+        }
+        
+        co2_emissions = 0
+        for v in self.vehicles:
+            co2_emissions += v['distanceTraveled'] * co2_per_km.get(v['type'], 100)
+        
+        return {
+            'timestamp': datetime.utcnow().isoformat(),
+            'totalVehicles': total_vehicles,
+            'avgSpeed': round(avg_speed, 1),
+            'avgTravelTime': round(random.uniform(30.0, 90.0), 1),
+            'co2Emissions': round(co2_emissions, 1),
+            'vehicleCounts': vehicle_counts,
+            'emergencyVehiclesActive': vehicle_counts.get('emergency', 0),
+            'throughput': round(total_distance * 60),  # km per hour approximation
+            'congestionLevel': self._calculate_congestion_level(avg_speed),
+            'simulationTime': round(self.simulation_time, 1),
+            'totalDistanceTraveled': round(total_distance, 2)
+        }
+    
+    def _calculate_congestion_level(self, avg_speed: float) -> str:
+        """Calculate congestion level based on average speed"""
+        if avg_speed > 50:
+            return 'low'
+        elif avg_speed > 30:
+            return 'medium'
+        else:
+            return 'high'
+    
+    def _get_default_metrics(self) -> Dict:
+        """Get default metrics when no vehicles"""
+        return {
+            'timestamp': datetime.utcnow().isoformat(),
+            'totalVehicles': 0,
+            'avgSpeed': 0,
+            'avgTravelTime': 0,
+            'co2Emissions': 0,
+            'vehicleCounts': {},
+            'emergencyVehiclesActive': 0,
+            'throughput': 0,
+            'congestionLevel': 'low',
+            'simulationTime': round(self.simulation_time, 1),
+            'totalDistanceTraveled': 0
+        }
+    
+    def get_simulation_data(self) -> Dict:
+        """Get complete simulation data for WebSocket"""
         return {
             'vehicles': self.vehicles,
             'traffic_lights': self.traffic_lights,
-            'metrics': self.calculate_metrics(),
+            'metrics': self.metrics,
             'timestamp': time.time(),
             'simulation_time': self.simulation_time,
             'scenario': self.current_scenario,
-            'network': self.network
+            'is_running': self.is_running,
+            'is_paused': self.is_paused,
+            'stats': self.stats
         }
-        
-    def calculate_metrics(self) -> Dict[str, Any]:
-        """Calculer les métriques"""
-        if not self.vehicles:
-            return {}
-            
-        speeds = [v['speed'] for v in self.vehicles]
-        waiting_times = [v.get('waitingTime', 0) for v in self.vehicles]
-        vehicle_types = [v['type'] for v in self.vehicles]
-        
-        type_counts = {}
-        for vtype in vehicle_types:
-            type_counts[vtype] = type_counts.get(vtype, 0) + 1
-            
-        total_co2 = sum(v['distanceTraveled'] * 0.12 for v in self.vehicles)
-        
-        return {
-            'timestamp': datetime.now().isoformat(),
-            'totalVehicles': len(self.vehicles),
-            'avgSpeed': sum(speeds) / len(speeds),
-            'maxSpeed': max(speeds) if speeds else 0,
-            'minSpeed': min(speeds) if speeds else 0,
-            'avgTravelTime': self.simulation_time,
-            'avgWaitingTime': sum(waiting_times) / len(waiting_times) if waiting_times else 0,
-            'co2Emissions': total_co2,
-            'vehicleTypeCounts': type_counts,
-            'emergencyVehiclesActive': type_counts.get('emergency', 0),
-            'queueLengths': {f'intersection_{i}': random.randint(0, 10) for i in range(4)},
-            'throughput': len(self.vehicles) * 3600 / max(1, self.simulation_time)
-        }
-        
-    def add_emergency_vehicle(self, vehicle_data: Optional[Dict] = None) -> str:
-        """Ajouter un véhicule d'urgence"""
-        emergency_id = f'emergency_{int(time.time())}_{len(self.vehicles)}'
-        
-        vehicle = vehicle_data or {}
-        self.vehicles.append({
-            'id': emergency_id,
-            'type': 'emergency',
-            'position': vehicle.get('position', {
-                'lat': 48.8566,
-                'lng': 2.3522
-            }),
-            'speed': vehicle.get('speed', 80.0),
-            'lane': 'emergency_lane',
-            'heading': vehicle.get('heading', 0),
-            'route': ['emergency_start', 'emergency_end'],
-            'color': '#ef4444',
-            'length': 6.0,
-            'acceleration': 0,
-            'waitingTime': 0,
-            'distanceTraveled': 0,
-            'sirenActive': True
-        })
-        
-        logger.info(f"Véhicule d'urgence ajouté: {emergency_id}")
-        return emergency_id
-        
-    def cleanup(self):
-        """Nettoyer les ressources"""
-        self.stop_simulation()
-        self.vehicles.clear()
-        self.traffic_lights.clear()
-        self.network.clear()
-        logger.info("Simulateur nettoyé")
+    
+    def get_vehicle_by_id(self, vehicle_id: str) -> Dict:
+        """Get vehicle by ID"""
+        for vehicle in self.vehicles:
+            if vehicle['id'] == vehicle_id:
+                return vehicle
+        return None
+    
+    def remove_vehicle(self, vehicle_id: str) -> bool:
+        """Remove vehicle by ID"""
+        for i, vehicle in enumerate(self.vehicles):
+            if vehicle['id'] == vehicle_id:
+                self.vehicles.pop(i)
+                return True
+        return False

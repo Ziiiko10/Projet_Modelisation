@@ -1,21 +1,9 @@
 """
-Module WebSocket pour Urban Flow
+WebSocket package
 """
 
+from .handlers import register_socketio_handlers
+from .events import WebSocketEvents
 from .simulation_stream import SimulationStream
-from .handlers import (
-    handle_connect,
-    handle_disconnect,
-    handle_command,
-    handle_emergency_vehicle,
-    handle_change_scenario
-)
 
-__all__ = [
-    'SimulationStream',
-    'handle_connect',
-    'handle_disconnect',
-    'handle_command',
-    'handle_emergency_vehicle',
-    'handle_change_scenario'
-]
+__all__ = ['register_socketio_handlers', 'WebSocketEvents', 'SimulationStream']
