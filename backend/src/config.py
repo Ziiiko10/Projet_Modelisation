@@ -21,9 +21,21 @@ class Config:
     SOCKETIO_LOGGER = DEBUG
     SOCKETIO_ENGINEIO_LOGGER = DEBUG
     
-    # Database
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///urbanflow.db')
+    # Database - PostgreSQL
+    # Utilisez DATABASE_URL de l'environnement ou SQLite en fallback
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
+    if not SQLALCHEMY_DATABASE_URI:
+        # Fallback SQLite pour développement
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///urbanflow.db'
+        print("⚠️  PostgreSQL non configuré, utilisation de SQLite")
+    else:
+        print("✅ Configuration PostgreSQL détectée")
+    
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_recycle': 300,
+        'pool_pre_ping': True,
+    }
     
     # Simulation
     SIMULATION_UPDATE_INTERVAL = 0.1  # seconds (100ms)
