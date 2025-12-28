@@ -47,11 +47,6 @@ export const useWebSocket = () => {
       setIsConnected(true);
     };
 
-    const handleDisconnect = () => {
-      console.log('WebSocket disconnected');
-      setIsConnected(false);
-    };
-
     const handleSimulationUpdate = (data: SimulationUpdateData) => {
       console.log('Received simulation update:', data);
       if (data.vehicles) {
@@ -90,29 +85,25 @@ export const useWebSocket = () => {
     };
 
     // Connectez-vous d'abord
-    websocketService.connect();
-    setIsConnected(websocketService.isConnected());
+    websocketService.connect().then(() => {
+      setIsConnected(websocketService.isConnectedState());
+    });
 
-    // Configurez les listeners
-    websocketService.on(WS_EVENTS.CONNECT, handleConnect);
-    websocketService.on(WS_EVENTS.DISCONNECT, handleDisconnect);
-    websocketService.on(WS_EVENTS.SIMULATION_UPDATE, handleSimulationUpdate);
-    websocketService.on(WS_EVENTS.VEHICLE_UPDATE, handleVehicleUpdate);
-    websocketService.on(WS_EVENTS.TRAFFIC_LIGHT_UPDATE, handleTrafficLightUpdate);
-    websocketService.on(WS_EVENTS.METRICS_UPDATE, handleMetricsUpdate);
+    // Configurez les listeners - on() retourne une fonction de cleanup
+    const cleanupConnect = websocketService.on(WS_EVENTS.CONNECT, handleConnect);
+    const cleanupSimulationUpdate = websocketService.on(WS_EVENTS.SIMULATION_UPDATE, handleSimulationUpdate);
+    const cleanupVehicleUpdate = websocketService.on(WS_EVENTS.VEHICLE_UPDATE, handleVehicleUpdate);
+    const cleanupTrafficLightUpdate = websocketService.on(WS_EVENTS.TRAFFIC_LIGHT_UPDATE, handleTrafficLightUpdate);
+    const cleanupMetricsUpdate = websocketService.on(WS_EVENTS.METRICS_UPDATE, handleMetricsUpdate);
 
     // Cleanup
     return () => {
       console.log('Cleaning up WebSocket...');
-      websocketService.off(WS_EVENTS.CONNECT, handleConnect);
-      websocketService.off(WS_EVENTS.DISCONNECT, handleDisconnect);
-      websocketService.off(WS_EVENTS.SIMULATION_UPDATE, handleSimulationUpdate);
-      websocketService.off(WS_EVENTS.VEHICLE_UPDATE, handleVehicleUpdate);
-      websocketService.off(WS_EVENTS.TRAFFIC_LIGHT_UPDATE, handleTrafficLightUpdate);
-      websocketService.off(WS_EVENTS.METRICS_UPDATE, handleMetricsUpdate);
-      
-      // Ne déconnectez pas automatiquement si vous voulez garder la connexion
-      // websocketService.disconnect();
+      cleanupConnect();
+      cleanupSimulationUpdate();
+      cleanupVehicleUpdate();
+      cleanupTrafficLightUpdate();
+      cleanupMetricsUpdate();
     };
   }, []); // Tableau de dépendances VIDE - ne dépend d'aucune fonction
 

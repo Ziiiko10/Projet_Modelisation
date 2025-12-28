@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { simulationApi } from '../services/api';
+import { simulationAPI, vehiclesAPI } from '../services/api.ts';
 import { useSimulationStore } from '../stores';
 import { useUIStore } from '../stores';
 import { StartSimulationRequest, EmergencyVehicleRequest } from '../types';
@@ -12,16 +12,21 @@ export const useSimulation = () => {
     async (request: StartSimulationRequest) => {
       try {
         setLoading(true, 'Starting simulation...');
-        const response = await simulationApi.start(request);
+        const scenarioId = request.scenarioId || 'default';
+        const response = await simulationAPI.start(scenarioId);
 
-        if (response.success && response.data) {
-          setState(response.data);
-          addAlert({
-            type: 'success',
-            message: response.message || 'Simulation started',
-            duration: 3000,
-          });
-        }
+        setState({ 
+          isRunning: true, 
+          isPaused: false,
+          currentScenario: scenarioId,
+          speedMultiplier: request.speedMultiplier || 1,
+          optimizationMode: request.optimizationMode || false,
+        });
+        addAlert({
+          type: 'success',
+          message: response.message || 'Simulation started',
+          duration: 3000,
+        });
       } catch (error) {
         addAlert({
           type: 'error',
@@ -38,16 +43,14 @@ export const useSimulation = () => {
   const stopSimulation = useCallback(async () => {
     try {
       setLoading(true, 'Stopping simulation...');
-      const response = await simulationApi.stop();
+      const response = await simulationAPI.stop();
 
-      if (response.success) {
-        setState({ isRunning: false, isPaused: false });
-        addAlert({
-          type: 'success',
-          message: response.message || 'Simulation stopped',
-          duration: 3000,
-        });
-      }
+      setState({ isRunning: false, isPaused: false });
+      addAlert({
+        type: 'success',
+        message: response.message || 'Simulation stopped',
+        duration: 3000,
+      });
     } catch (error) {
       addAlert({
         type: 'error',
@@ -61,15 +64,13 @@ export const useSimulation = () => {
 
   const pauseSimulation = useCallback(async () => {
     try {
-      const response = await simulationApi.pause();
-      if (response.success) {
-        setState({ isPaused: true });
-        addAlert({
-          type: 'info',
-          message: 'Simulation paused',
-          duration: 2000,
-        });
-      }
+      const response = await simulationAPI.pause();
+      setState({ isPaused: true });
+      addAlert({
+        type: 'info',
+        message: response.message || 'Simulation paused',
+        duration: 2000,
+      });
     } catch (error) {
       addAlert({
         type: 'error',
@@ -81,15 +82,13 @@ export const useSimulation = () => {
 
   const resumeSimulation = useCallback(async () => {
     try {
-      const response = await simulationApi.resume();
-      if (response.success) {
-        setState({ isPaused: false });
-        addAlert({
-          type: 'info',
-          message: 'Simulation resumed',
-          duration: 2000,
-        });
-      }
+      const response = await simulationAPI.resume();
+      setState({ isPaused: false });
+      addAlert({
+        type: 'info',
+        message: response.message || 'Simulation resumed',
+        duration: 2000,
+      });
     } catch (error) {
       addAlert({
         type: 'error',
@@ -130,16 +129,14 @@ export const useSimulation = () => {
   }, [state.optimizationMode, setState, addAlert]);
 
   const addEmergencyVehicle = useCallback(
-    async (request: EmergencyVehicleRequest) => {
+    async (_request: EmergencyVehicleRequest) => {
       try {
-        const response = await simulationApi.addEmergencyVehicle(request);
-        if (response.success) {
-          addAlert({
-            type: 'success',
-            message: 'Emergency vehicle dispatched',
-            duration: 3000,
-          });
-        }
+        const response = await vehiclesAPI.addEmergency();
+        addAlert({
+          type: 'success',
+          message: response.message || 'Emergency vehicle dispatched',
+          duration: 3000,
+        });
       } catch (error) {
         addAlert({
           type: 'error',

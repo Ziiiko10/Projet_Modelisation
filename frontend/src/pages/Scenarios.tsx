@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '../components/common';
-import { scenariosApi } from '../services/api';
-import { Scenario } from '../types';
+import { scenariosAPI, Scenario } from '../services/api';
 import { Play, Users, Clock, AlertTriangle } from 'lucide-react';
 import { useSimulation } from '../hooks/useSimulation';
 
@@ -14,8 +13,8 @@ export const Scenarios = () => {
   }, []);
 
   const loadScenarios = async () => {
-    const data = await scenariosApi.getAll();
-    setScenarios(data);
+    const data = await scenariosAPI.getAll();
+    setScenarios(data.scenarios);
   };
 
   const handleRunScenario = (scenarioId: string) => {
@@ -38,7 +37,7 @@ export const Scenarios = () => {
                   <h3 className="text-lg font-semibold text-gray-900">{scenario.name}</h3>
                   <p className="text-sm text-gray-600 mt-1">{scenario.description}</p>
                 </div>
-                {scenario.rushHourMode && (
+                {scenario.trafficDensity === 'high' && (
                   <Badge variant="warning">Rush Hour</Badge>
                 )}
               </div>
@@ -52,10 +51,12 @@ export const Scenarios = () => {
                   <Clock className="w-4 h-4" />
                   <span>{scenario.duration / 60} min</span>
                 </div>
-                <div className="flex items-center space-x-2 text-gray-700">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>{scenario.emergencyVehicles} emergency</span>
-                </div>
+                {scenario.hasEmergencyVehicles && (
+                  <div className="flex items-center space-x-2 text-gray-700">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Emergency vehicles</span>
+                  </div>
+                )}
               </div>
 
               <Button

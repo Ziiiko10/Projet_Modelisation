@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Urban Flow Connection Test</title>
+</head>
+<body>
+    <h1>Urban Flow Backend Test</h1>
+    
+    <button onclick="testAPI()">Test REST API</button>
+    <button onclick="testWebSocket()">Test WebSocket</button>
+    
+    <div id="result"></div>
+    
+    <script>
+        const resultDiv = document.getElementById('result');
+        
+        async function testAPI() {
+            resultDiv.innerHTML = 'Testing REST API...';
+            
+            try {
+                const response = await fetch('http://localhost:5000/api/health');
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <h3>✅ REST API Working!</h3>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<h3>❌ REST API Failed: ${error}</h3>`;
+            }
+        }
+        
+        function testWebSocket() {
+            resultDiv.innerHTML = 'Testing WebSocket...';
+            
+            const ws = new WebSocket('ws://localhost:5000/ws');
+            
+            ws.onopen = () => {
+                resultDiv.innerHTML += '<br>✅ WebSocket Connected!';
+                
+                // Send a test command
+                ws.send(JSON.stringify({
+                    command: 'get_status'
+                }));
+            };
+            
+            ws.onmessage = (event) => {
+                resultDiv.innerHTML += `<br>📨 Received: ${event.data}`;
+            };
+            
+            ws.onerror = (error) => {
+                resultDiv.innerHTML += `<br>❌ WebSocket Error: ${error}`;
+            };
+            
+            ws.onclose = () => {
+                resultDiv.innerHTML += '<br>📡 WebSocket Closed';
+            };
+        }
+    </script>
+</body>
+</html>
